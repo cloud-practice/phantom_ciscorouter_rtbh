@@ -37,7 +37,6 @@ import httplib
 import logging
 import sys
 
-from cisco_csr_connector_consts import *
 
 # ========================================================
 # AppConnector
