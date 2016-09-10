@@ -4,7 +4,7 @@
      short_description: This Phantom app connects to the Cisco CSR platform
      author: Todd Ruch, World Wide Technology
      Revision history:
-     25 Aug 2016  |  0.1 - stole base code from Joel
+     25 Aug 2016  |  0.1 - stole base phantom code from Joel King
      21 April 2016  |  1.0 - initial release
 
      Copyright (c) 2016 World Wide Technology, Inc.
@@ -35,7 +35,10 @@ import time
 import requests
 import httplib
 import logging
-import sys
+
+REST_PORT = '55443'
+TOKEN_RESOURCE = '/auth/token-services'
+ACCEPT_HEADERS = {'Accept':'application/json'}
 
 
 # ========================================================
@@ -55,17 +58,24 @@ class CSR_Connector(BaseConnector):
         super(CSR_Connector, self).__init__()
 
         # standard port for IOS XE REST API
-        self.REST_PORT = '55443'
+        self.port = REST_PORT
         # base URI with version number
         self.BASE_URI = '/api/v1'
         # resourse URI
-        self.RESOURCE = '/routing-svc/static-routes'
+        self.PATH_STATIC_ROUTES = '/routing-svc/static-routes'
         # resource for auth token
-        self.user = kwargs['user']
-        self.TOKEN_RESOURCE = '/auth/token-services'
-        self.headers
+        self.user = ''
+        self.password = ''
+        self.device = ''
+        self.next_hop_IP = '192.169.2.1'
+        self.version = 'v1'
+        self.destination_network = ''
+        self.js = ''
+        self.TOKEN_RESOURCE =  TOKEN_RESOURCE
+        self.headers = ACCEPT_HEADERS
         self.HEADER = {"Content-Type": "application/json"}
         self.status_code = []
+        #logging.basicConfig(filename='/var/log/phantom/cisco_csr_app.log',level=logging.DEBUG)
 
     def initialize(self):
         """
@@ -75,6 +85,7 @@ class CSR_Connector(BaseConnector):
         If this function returns phantom.APP_ERROR, then AppConnector::handle_action will not get called.
         """
         self.debug_print("%s INITIALIZE %s" % (CSR_Connector.BANNER, time.asctime()))
+        self.debug_print("INITAL CONFIG: %s" % self.get_config())
         return phantom.APP_SUCCESS
 
     def finalize(self):
@@ -101,112 +112,224 @@ class CSR_Connector(BaseConnector):
     def _test_connectivity(self, param):
         """
         Called when the user depresses the test connectivity button on the Phantom UI.
-        Use a basic query of your organizations to determine if the authentication token is correct
 
-        Meraki will send back a 3xx Redirect when you hit the first API. The requests module will
-        handle the redirect for you, but it would be nice to know the actual server processing your
-        request, so I will output the URL in the message.
-
-            curl -X POST https://10.0.1.10:55443/api/v1/auth/token-services
-                 -H "Accept:application/json" -u "{user}:{pass}" -d "" --insecure
-
+            curl -k -X POST https://{device}:55443/api/v1/auth/token-services
+                 -H "Accept:application/json" -u "{user}:{pass}" -d ""
+        
         """
+        action_result = ActionResult(dict(param))          # Add an action result to the App Run
+        self.add_action_result(action_result)
+
         self.debug_print("%s TEST_CONNECTIVITY %s" % (CSR_Connector.BANNER, param))
-        self.user = param['user']
-        self.password = param['password']
-        response = get_token(self, self.user, self.password)
-        return
+        config = self.get_config()
+
+        try:
+            self.user = config["user"]
+            self.password = config["password"]
+            self.device = config["trigger_host"]
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+            return self.set_status_save_progress(phantom.APP_ERROR, "KeyError attempting to parse organization ID and name")
+
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+
+        self.get_token()
+        if self.token:
+            action_result.set_status(phantom.APP_SUCCESS)
+            self.debug_status("RECEIVED TOKEN: {0}".format(self.token))
+            return self.set_status_save_progress(phantom.APP_SUCCESS, "Received token from device")
+        else:
+            action_result.set_status(phantom.APP_ERROR)
+            self.debug_status("DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
+            return self.set_status_save_progress(phantom.APP_ERROR, "DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
 
 
     def listStaticBlackHoledIPs(self, param):
         """
             curl -k -X GET https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes
                  -H "Accept:application/json" -u "{user}:{pass}"
-                 -d '{"destination-network":"7.7.7.7/32","next-host-router":"192.0.2.1/32"}'
+                 -d ''
         """
-        get_token(self, user, password)
-        self.method = 'GET'
-        result = self.run('get',TOKEN_RESOURCE)
-        return
+        action_result = ActionResult(dict(param))          # Add an action result to the App Run
+        self.add_action_result(action_result)
+
+        config = self.get_config()
+        self.debug_print(config)
+
+        try:
+            self.user = config["user"]
+            self.password = config["password"]
+            self.device = config["trigger_host"]
+            #self.user = param["user"]
+            #self.password = param["password"]
+            #self.device = param['trigger_host']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+        result = self.get_token()
+
+        # Get the current list of static routes from the Target Host
+        api_response = self.api_run('get',self.PATH_STATIC_ROUTES)
+        self.debug_print("listStaticBlackHoledIP's result RAW: {0}".format(api_response))
+        try:
+            route_list = api_response['items']
+            action_result.add_data(route_list)
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+
+        # Even if the query was successfull the data might not be available
+        if not route_list:
+            return action_result.set_status(phantom.APP_ERROR, CISCO_CSR_ERR_QUERY_RETURNED_NO_DATA)
+        if route_list:
+            routes = []
+            for i in route_list:
+                routes.append(i['destination-network'])
+            summary = {'routes':routes}
+            action_result.update_summary(summary)
+            action_result.set_status(phantom.APP_SUCCESS)
+        else:
+            action_result.set_status(phantom.APP_SUCCESS, CISCO_CSR_SUCC_QUERY)
+
+        return action_result.get_status()
 
 
-    def setStaticBlackHoledIP(self, param):
+    def setStaticBlackHole(self, param):
         """
-            curl -k -X POST https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes
+        curl -k -X POST -H "Accept:application/json" -H "Content-type:application/json" \
+            -H "X-auth-token:{token}" -u "{user}:{pass}" \
+            -d '{"destination-network":"7.7.7.10/32","next-hop-router":"192.0.2.1"}' \
+            https://10.0.1.10:55443/api/v1/routing-svc/static-routes
+        """
+        action_result = ActionResult(dict(param))          # Add an action result to the App Run
+        self.add_action_result(action_result)
+        
+        self.debug_print(param)
+
+        config = self.get_config()
+        try:
+            self.user = config["user"]
+            self.password = config["password"]
+            self.device = config['trigger_host']
+            self.destination_network = param['destination-network']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+        self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
+
+        self.js = {"destination-network":self.destination_network, "next-hop-router":"192.0.2.1"}
+        result = self.get_token()
+        self.debug_print("self.js: {0}".format(self.js))
+        # Go get er!
+        api_response = self.api_run('post',self.PATH_STATIC_ROUTES)
+        self.debug_print("API RESPONSE: {0}".format(api_response))
+
+        if api_response:
+            action_result.set_status(phantom.APP_SUCCESS)
+        else:
+            #TODO: Figure out how to send a good error if the route already exists (404 error)
+            return action_result.set_status(phantom.APP_ERROR)
+
+        return action_result.get_status()
+
+
+    def delStaticBlackHole(self, param):
+        """
+            curl -k -X DELETE -H "Accept:application/json" -u "{user}:{pass}" -d '' \
+                 https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes/{src_IP}_32_192.0.2.1
+        """
+        action_result = ActionResult(dict(param))          # Add an action result to the App Run
+        self.add_action_result(action_result)
+
+        config = self.get_config()
+        self.debug_print(param)
+
+        try:
+            self.user = config["user"]
+            self.password = config["password"]
+            self.device = config["trigger_host"]
+            self.destination_network = param["destination-network"]
+            self.next_hop_IP = '192.0.2.1'
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+        self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
+
+        try:
+            dest_net = self.destination_network.split('/')
+        except:
+            self.debug_print("Network not formatted correctly")
+
+
+        result = self.get_token()
+        PATH_STATIC_ROUTES = self.PATH_STATIC_ROUTES + "/" + \
+                dest_net[0] + "_" + dest_net[1] + "_" + self.next_hop_IP
+        api_response = self.api_run('delete',PATH_STATIC_ROUTES)
+        self.debug_print("API RESPONSE: {0}".format(api_response))
+
+        if api_response:
+            action_result.set_status(phantom.APP_SUCCESS)
+        else:
+            #TODO: Figure out how to send a good error if the route already exists (404 error)
+            return action_result.set_status(phantom.APP_ERROR)
+
+        return action_result.get_status()
+
+
+    def get_token(self):
+        """
+        Get an auth token from the device
+            curl -k -X POST https://{trigger_rtr}:55443/api/v1/auth/token-services/
                  -H "Accept:application/json" -u "{user}:{pass}"
-                 -d '{"destination-network":"7.7.7.7/32","next-host-router":"192.0.2.1/32"}'
+                 -d ''
         """
-        get_token(self, user, password)
-        self.js = '{"destination-network":"7.7.7.7/32","next-host-router":"192.0.2.1/32"}'
-        result = self.run('past',TOKEN_RESOURCE)
-        return
-
-
-    def delStaticBlackHoledIP(self, param):
-        """
-            curl -k -X DELETE https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes
-                 -H "Accept:application/json" -u "{user}:{pass}"
-                 -d '{"destination-network":"7.7.7.7/32","next-host-router":"192.0.2.1/32"}'
-        """
-        resource = '/routing-svc/static-routes'
-        get_token(self, user, password)
-        self.js = '{"destination-network":"7.7.7.7/32","next-host-router":"192.0.2.1/32"}'
-        result = self.run('delete',resource)
-        return
-
-
-    def get_token(self, user, password):
-        """ get an auth token from the device """
-        result = self.run('post',TOKEN_RESOURCE)
+        result = self.api_run('post',TOKEN_RESOURCE)
+        self.debug_print("{0}".format(result))
         self.token = result['token-id']
-        logging.debug("token id: {0}".format(self.token))
+        self.debug_print("token id: {0}".format(self.token))
         self.headers.update({'X-auth-token':self.token})
-        logging.debug("{0}".format(result))
+        self.debug_print("{0}".format(result))
         return
 
 
     def build_url(self, rest_port=REST_PORT,resource=TOKEN_RESOURCE):
-        """ build a URL for the REST resource """
-        self.url = 'https://{0}:{1}{2}{3}'.format(self.device,self.port,self.version,resource)
-        logging.debug('set full URL to: {0}'.format(self.url))
+        """ 
+        build a URL for the REST resource
+        """
+        self.url = 'https://{0}:{1}/api/{2}{3}'.format(self.device,self.port,self.version,resource)
+        self.debug_print('set full URL to: {0}'.format(self.url))
         return
 
 
-    def run(self, method, resource):
-        """ get/put/post/delete a request to the REST service """
+    def api_run(self, method, resource):
+        """
+        get/put/post/delete a request to the REST service
+        This module requires that the 
+        """
         # a GET/POST/PUT/DELETE method name was passed in;
         # call the appropriate method from requests module
         request_method = getattr(requests,method)
+        self.debug_print("api_run: {0}".format(request_method))
         self.build_url(resource=resource)
-        if self.json:
+        if self.js:
             self.headers.update({'Content-type':'application/json'})
-            r = request_method(self.url, auth=(self.user,self.password),\
+            result = request_method(self.url, auth=(self.user,self.password),\
                     headers = self.headers,\
-                    data = json.dumps(self.json),\
+                    data = json.dumps(self.js),\
                     verify = False)
         else:
-            r = request_method(self.url, auth=(self.user, self.password),\
+            result = request_method(self.url, auth=(self.user, self.password),\
                     headers = self.headers,\
                     verify = False)
+        if result.status_code in [requests.codes.ok]:
+            return result.json()
+        elif result.status_code in [requests.codes.created, requests.codes.no_content]:
+            return True
+        #else:
+        #    self.interpret_response(r.status_code)
 
-
-
-    def api_action(self, URL):
-        """ Method to query and return results, return an empty list if there are connection error(s).  """
-        header = self.HEADER
-        header["X-Cisco-Meraki-API-Key"] = self.get_configuration("Meraki-API-Key")
-        URI = "https://" + self.get_configuration("dashboard") + URL
-        try:
-            r = requests.get(URI, headers=header, verify=False)
-        except requests.ConnectionError as e:
-            self.set_status_save_progress(phantom.APP_ERROR, str(e))
-            return []
-        self.status_code.append(r.status_code)
-
-        try:
-            return r.json()
-        except ValueError:                                 # If you get a 404 error, throws a ValueError exception
-            return []
 
     def handle_action(self, param):
         """
@@ -223,9 +346,10 @@ class CSR_Connector(BaseConnector):
         self.debug_print("%s HANDLE_ACTION action_id:%s parameters:\n%s" % (CSR_Connector.BANNER, action_id, param))
 
         supported_actions = {"test connectivity": self._test_connectivity,
-                             "list black holes": self.listStaicBlackHoledIPs,
-                             "create black hole": self.setStaticBlackHole,
-                             "delete black hole": self.delStaticBlackHole}
+                             "list_networks": self.listStaticBlackHoledIPs,
+                             "block_network": self.setStaticBlackHole,
+                             "unblock_network": self.delStaticBlackHole
+                             }
 
         run_action = supported_actions[action_id]
 
@@ -233,7 +357,7 @@ class CSR_Connector(BaseConnector):
 
 
 # =============================================================================================
-# Logic for testing interactively e.g. python2.7 ./meraki_connector.py ./test_jsons/test.json
+# Logic for testing interactively e.g. python2.7 ./cisco_csr_connector.py ./test_jsons/test.json
 # If you don't reference your module with a "./" you will encounter a 'failed to load app json'
 # =============================================================================================
 

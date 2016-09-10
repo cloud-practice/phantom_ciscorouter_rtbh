@@ -1,0 +1,14 @@
+{
+    "app_config": null,
+    "asset_id": "22",
+    "config": {
+      "trigger_host": "10.0.1.10",
+      "user": "taruch",
+      "password": "taruch"
+    },
+    "debug_level": 3,
+    "identifier": "list_networks",
+    "parameters": [
+      {}
+    ]
+}
