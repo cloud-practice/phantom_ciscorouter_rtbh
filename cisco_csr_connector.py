@@ -160,6 +160,7 @@ class CSR_Connector(BaseConnector):
             self.user = config["user"]
             self.password = config["password"]
             self.device = config["trigger_host"]
+            self.next_hop_IP = config['route_to_null']
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
@@ -171,20 +172,25 @@ class CSR_Connector(BaseConnector):
         self.debug_print("listStaticBlackHoledIP's result RAW: {0}".format(api_response))
         try:
             route_list = api_response['items']
-            action_result.add_data(route_list)
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
+        #action_result.add_data(route_list)
         # Even if the query was successfull the data might not be available
         if not route_list:
             return action_result.set_status(phantom.APP_ERROR, CISCO_CSR_ERR_QUERY_RETURNED_NO_DATA)
         if route_list:
             routes = []
-            for i in route_list:
-                routes.append(i['destination-network'])
-            summary = {'routes':routes}
+            for dest in route_list:
+                if dest["next-hop-router"] == self.next_hop_IP:
+                    action_result.add_data({'destination-network': dest['destination-network']})
+                    routes.append(dest['destination-network'])
+            #summary = {'routes':routes}
+            summary = {'message': "Query returned {0} routes".format(len(route_list))}
             action_result.update_summary(summary)
             action_result.set_status(phantom.APP_SUCCESS)
+            self.set_status_save_progress(phantom.APP_SUCCESS, "Query returned {0} \
+                routes".format(action_result.get_data_size))
         else:
             action_result.set_status(phantom.APP_SUCCESS, CISCO_CSR_SUCC_QUERY)
 
