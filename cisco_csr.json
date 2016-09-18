@@ -7,7 +7,7 @@
   "type": "information service",
   "license": "Copyright (c) World Wide Technology, Inc. 2016",
   "main_module" : "cisco_csr_connector.pyc",
-  "app_version": "1.0",
+  "app_version": "1.1",
   "utctime_updated": "2016-08-23T22:02:18.000000Z",
   "product_vendor": "Cisco",
   "product_name": "Cisco CSR",
@@ -16,6 +16,11 @@
   "logo": "cisco.png",
   "url": "https://github.com/taruch/phantom_cisco_csr_rtbh.git",
   "configuration": {
+    "route_to_null": {
+      "description": "Null Route IP (x.x.x.x)",
+      "data_type": "string",
+      "required": true
+    },
     "trigger_host": {
       "description": "Trigger Host",
       "data_type": "string",
@@ -28,7 +33,7 @@
     },
       "password": {
         "description": "Password",
-        "data_type": "string",
+        "data_type": "password",
         "required": true
     }
   },
@@ -51,6 +56,12 @@
       "identifier": "list_networks",
       "read_only": true,
       "parameters": {},
+      "render": {
+        "width": 12,
+        "title": "Static Routes",
+        "type": "table",
+        "height": 5
+      },
       "output": [
         {
           "data_path": "action_result.data.*.items.destination-network",
@@ -66,22 +77,6 @@
         {
           "data_path": "action_result.message",
           "data_type": "string"
-        },
-        {
-          "data_path": "action_result.parameter.timespan",
-          "data_type": "string"
-        },
-        {
-          "data_path": "action_result.parameter.search_string",
-          "data_type": "string"
-        },
-        {
-          "data_path": "summary.total_objects",
-          "data_type": "numeric"
-        },
-        {
-          "data_path": "summary.total_objects_successful",
-          "data_type": "numeric"
         }
       ],
       "versions": "EQ(*)"

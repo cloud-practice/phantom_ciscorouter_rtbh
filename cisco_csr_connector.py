@@ -67,7 +67,7 @@ class CSR_Connector(BaseConnector):
         self.user = ''
         self.password = ''
         self.device = ''
-        self.next_hop_IP = '192.169.2.1'
+        self.next_hop_IP = ''
         self.version = 'v1'
         self.destination_network = ''
         self.js = ''
@@ -135,13 +135,13 @@ class CSR_Connector(BaseConnector):
 
         self.get_token()
         if self.token:
-            action_result.set_status(phantom.APP_SUCCESS)
-            self.debug_status("RECEIVED TOKEN: {0}".format(self.token))
-            return self.set_status_save_progress(phantom.APP_SUCCESS, "Received token from device")
+            #action_result.set_status(phantom.APP_SUCCESS)
+            self.debug_print("RECEIVED TOKEN: {0}".format(self.token))
+            return self.set_status_save_progress(phantom.APP_SUCCESS, "SUCCESS! Received token from device")
         else:
-            action_result.set_status(phantom.APP_ERROR)
-            self.debug_status("DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
-            return self.set_status_save_progress(phantom.APP_ERROR, "DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
+            #action_result.set_status(phantom.APP_ERROR)
+            self.debug_print("DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
+            return self.set_status_save_progress(phantom.APP_ERROR, "FAILURE! Unable to obtain token from device")
 
 
     def listStaticBlackHoledIPs(self, param):
@@ -160,9 +160,6 @@ class CSR_Connector(BaseConnector):
             self.user = config["user"]
             self.password = config["password"]
             self.device = config["trigger_host"]
-            #self.user = param["user"]
-            #self.password = param["password"]
-            #self.device = param['trigger_host']
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
@@ -211,6 +208,7 @@ class CSR_Connector(BaseConnector):
             self.user = config["user"]
             self.password = config["password"]
             self.device = config['trigger_host']
+            self.next_hop_IP = config['route_to_null']
             self.destination_network = param['destination-network']
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
@@ -218,7 +216,7 @@ class CSR_Connector(BaseConnector):
         self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
         self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
 
-        self.js = {"destination-network":self.destination_network, "next-hop-router":"192.0.2.1"}
+        self.js = {"destination-network":self.destination_network, "next-hop-router":self.next_hop_IP}
         result = self.get_token()
         self.debug_print("self.js: {0}".format(self.js))
         # Go get er!
@@ -249,8 +247,8 @@ class CSR_Connector(BaseConnector):
             self.user = config["user"]
             self.password = config["password"]
             self.device = config["trigger_host"]
+            self.next_hop_IP = config['route_to_null']
             self.destination_network = param["destination-network"]
-            self.next_hop_IP = '192.0.2.1'
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
@@ -290,7 +288,6 @@ class CSR_Connector(BaseConnector):
         self.token = result['token-id']
         self.debug_print("token id: {0}".format(self.token))
         self.headers.update({'X-auth-token':self.token})
-        self.debug_print("{0}".format(result))
         return
 
 
