@@ -2,15 +2,16 @@
     "app_config": null,
     "asset_id": "22",
     "config": {
+      "route_to_null": "192.0.2.1",
       "trigger_host": "10.0.1.10",
-      "user": "taruch",
-      "password": "taruch"
+      "user": "user",
+      "password": "user"
     },
     "debug_level": 4,
     "identifier": "block_network",
     "parameters": [
         {
-        "destination-network": "216.58.219.0/24"
+        "destination-network": "7.7.7.0/24"
         }
     ]
 }

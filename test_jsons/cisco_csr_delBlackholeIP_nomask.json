@@ -8,10 +8,10 @@
       "password": "user"
     },
     "debug_level": 4,
-    "identifier": "block_network",
+    "identifier": "unblock_network",
     "parameters": [
         {
-        "destination-network": "7.7.7.20/32"
+        "destination-network": "7.7.7.20"
         }
     ]
 }

@@ -20,6 +20,8 @@
      GNU Affero General Public License for more details.
 
 
+
+
 """
 #
 # Phantom App imports
@@ -219,8 +221,11 @@ class CSR_Connector(BaseConnector):
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
-        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
         self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
+
+        self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
+        if not self.validate_ip():
+            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination-network"]))
 
         self.js = {"destination-network":self.destination_network, "next-hop-router":self.next_hop_IP}
         result = self.get_token()
@@ -230,12 +235,11 @@ class CSR_Connector(BaseConnector):
         self.debug_print("API RESPONSE: {0}".format(api_response))
 
         if api_response:
-            action_result.set_status(phantom.APP_SUCCESS)
+            return action_result.set_status(phantom.APP_SUCCESS, "Successfully added {0}".format( self.destination_network ))
         else:
             #TODO: Figure out how to send a good error if the route already exists (404 error)
             return action_result.set_status(phantom.APP_ERROR)
-
-        return action_result.get_status()
+        #return action_result.get_status()
 
 
     def delStaticBlackHole(self, param):
@@ -261,11 +265,10 @@ class CSR_Connector(BaseConnector):
         self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
         self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
 
-        try:
-            dest_net = self.destination_network.split('/')
-        except:
-            self.debug_print("Network not formatted correctly")
-
+        self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
+        if not self.validate_ip():
+            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination-network"]))
+        dest_net = self.destination_network.split('/')
 
         result = self.get_token()
         PATH_STATIC_ROUTES = self.PATH_STATIC_ROUTES + "/" + \
@@ -274,12 +277,11 @@ class CSR_Connector(BaseConnector):
         self.debug_print("API RESPONSE: {0}".format(api_response))
 
         if api_response:
-            action_result.set_status(phantom.APP_SUCCESS)
+            return action_result.set_status(phantom.APP_SUCCESS, "Successfully deleted {0}".format( self.destination_network ))
         else:
             #TODO: Figure out how to send a good error if the route already exists (404 error)
             return action_result.set_status(phantom.APP_ERROR)
-
-        return action_result.get_status()
+        #return action_result.get_status()
 
 
     def get_token(self):
@@ -304,6 +306,25 @@ class CSR_Connector(BaseConnector):
         self.url = 'https://{0}:{1}/api/{2}{3}'.format(self.device,self.port,self.version,resource)
         self.debug_print('set full URL to: {0}'.format(self.url))
         return
+
+
+    def validate_ip(self):
+        # Determine if mask is included in IP
+        ip_and_mask = self.destination_network.split('/')
+        if len(ip_and_mask) != 2:
+            self.debug_print("Network Mask not included in {0}".format(self.destination_network))
+            # Normalize the IP
+            self.destination_network = str(self.destination_network) + '/32'
+        ip = ip_and_mask[0].split('.')
+        if len(ip) != 4:
+            return False
+        for x in ip:
+            if not x.isdigit():
+                return False
+            i = int(x)
+            if i < 0 or i > 255:
+                return False
+        return True
 
 
     def api_run(self, method, resource):
