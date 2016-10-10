@@ -7,7 +7,7 @@
   "type": "information service",
   "license": "Copyright (c) World Wide Technology, Inc. 2016",
   "main_module" : "cisco_csr_connector.pyc",
-  "app_version": "1.4",
+  "app_version": "1.5",
   "utctime_updated": "2016-10-09T22:02:18.000000Z",
   "product_vendor": "Cisco",
   "product_name": "Cisco CSR",
@@ -69,7 +69,7 @@
       },
       "output": [
         {
-          "data_path": "action_result.data.*.destination-network",
+          "data_path": "action_result.data.*.blackholed-network",
           "data_type": "string",
           "column_name": "Blocked Network",
           "column_order": 0

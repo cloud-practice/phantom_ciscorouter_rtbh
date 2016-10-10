@@ -5,6 +5,7 @@
       "route_to_null": "192.0.2.1",
       "trigger_host": "10.0.1.10",
       "user": "taruch",
+      "tag": "66",
       "password": "taruch"
     },
     "debug_level": 4,

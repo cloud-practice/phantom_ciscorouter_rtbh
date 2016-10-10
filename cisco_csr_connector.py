@@ -189,13 +189,22 @@ class CSR_Connector(BaseConnector):
             self.password = config["password"]
             self.device = config['trigger_host']
             self.next_hop_IP = config['route_to_null']
-            self.tag = config['tag']
             self.destination_network = param['destination-network']
 
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
-
-
+            self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
+            self.debug_print("next_hop_ip: {0}".format(self.next_hop_IP))
+            self.debug_print("tag: {0}".format(self.tag))
+            self.debug_print("destination-network: {0}".format(self.destination_network))
+        
+        # TAG is optional - may not exist
+        try:
+            self.tag = config['tag']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+            self.debug_print("No tag in configuration")
+            pass
 
         self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
         if not self.validate_ip():
@@ -204,11 +213,10 @@ class CSR_Connector(BaseConnector):
         network = str(ip.ip)
         subnetmask = str(ip.netmask)
 
-        self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
+
         self.debug_print("Dest_Net: {0}, Network: {1}, SubnetMask: {2}, tag: {3}".format(
             self.destination_network, network, subnetmask, self.tag ))
 
-        # Go get er!
         #csr_conn = self.get_Cisco_Session()
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -221,14 +229,18 @@ class CSR_Connector(BaseConnector):
         resp = csr_conn.recv(99999)
         self.debug_print("conf t _ resp: {0}".format(resp))
         #csr_conn.send('ip route %s %s %s tag %s\n' % network, subnetmask, self.next_hop_IP, self.tag)
-        add_Route = 'ip route {0} {1} {2} tag {3}\n'.format(
-                network, subnetmask, self.next_hop_IP, self.tag )
+        if self.tag:
+            add_Route = 'ip route {0} {1} {2} tag {3}\n'.format(
+                    network, subnetmask, self.next_hop_IP, self.tag )
+        else:
+            add_Route = 'ip route {0} {1} {2}\n'.format(
+                    network, subnetmask, self.next_hop_IP )
         csr_conn.send(add_Route)
         time.sleep(1)
         resp = csr_conn.recv(99999)
         csr_conn.close()
         ssh.close()
-        self.debug_print("sho ip static route resp: {0}".format(resp))
+        self.debug_print("show ip static route resp: {0}".format(resp))
 
         route_list = self._get_StaticBlackHoledIPs(self.user, self.password, self.device, self.next_hop_IP)
         for i in xrange(len(route_list)):
@@ -254,13 +266,21 @@ class CSR_Connector(BaseConnector):
             self.password = config["password"]
             self.device = config["trigger_host"]
             self.next_hop_IP = config['route_to_null']
-            self.tag = config['tag']
             self.destination_network = param["destination-network"]
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
+            self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
+            self.debug_print("next_hop_ip: {0}".format(self.next_hop_IP))
+            self.debug_print("tag: {0}".format(self.tag))
+            self.debug_print("destination-network: {0}".format(self.destination_network))
 
-        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
-        self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
+        # TAG is optional - may not exist
+        try:
+            self.tag = config['tag']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
+            self.debug_print("No tag in configuration")
+            pass
 
         self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
         if not self.validate_ip():
@@ -270,7 +290,6 @@ class CSR_Connector(BaseConnector):
         network = str(ip.ip)
         subnetmask = str(ip.netmask)
 
-        # Go get er!
         #csr_conn = self.get_Cisco_Session()
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -283,22 +302,27 @@ class CSR_Connector(BaseConnector):
         resp = csr_conn.recv(99999)
         self.debug_print("conf t _ resp: {0}".format(resp))
         #csr_conn.send('ip route %s %s %s tag %s\n' % network, subnetmask, self.next_hop_IP, self.tag)
-        del_Route = 'no ip route {0} {1} {2} tag {3}\n'.format(
-                network, subnetmask, self.next_hop_IP, self.tag )
+        if self.tag:
+            del_Route = 'no ip route {0} {1} {2} tag {3}\n'.format(
+                    network, subnetmask, self.next_hop_IP, self.tag )
+        else:
+            del_Route = 'no ip route {0} {1} {2}\n'.format(
+                    network, subnetmask, self.next_hop_IP )
         csr_conn.send(del_Route)
         time.sleep(1)
         resp = csr_conn.recv(99999)
         csr_conn.close()
         ssh.close()
-        self.debug_print("sho ip static route resp: {0}".format(resp))
+        self.debug_print("show ip static route resp: {0}".format(resp))
 
         route_list = self._get_StaticBlackHoledIPs(self.user, self.password, self.device, self.next_hop_IP)
         for i in xrange(len(route_list)):
             if self.destination_network in route_list[i]:
-                return action_result.set_status(phantom.APP_ERROR, "Route {0} \
-                not deleted".format( self.destination_network ))
+                return action_result.set_status(phantom.APP_ERROR,\
+                    "Route {0} not deleted".format( self.destination_network ))
         else:
-            return action_result.set_status(phantom.APP_SUCCESS, "Successfully added {0}".format( self.destination_network ))
+            return action_result.set_status(phantom.APP_SUCCESS, \
+                    "Successfully removed {0}".format( self.destination_network ))
 
 
 
@@ -320,7 +344,7 @@ class CSR_Connector(BaseConnector):
         time.sleep(1)
         resp = csr_conn.recv(99999)
         self.debug_print("set terminal length resp: {0}".format(resp))
-        # Send the sho ip static route command to the router
+        # Send the show ip static route command to the router
         csr_conn.send('show ip static route\n')
         time.sleep(1)
         resp = csr_conn.recv(99999)
