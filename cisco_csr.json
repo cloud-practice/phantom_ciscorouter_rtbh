@@ -7,7 +7,7 @@
   "type": "information service",
   "license": "Copyright (c) World Wide Technology, Inc. 2016",
   "main_module" : "cisco_csr_connector.pyc",
-  "app_version": "1.5",
+  "app_version": "1.6",
   "utctime_updated": "2016-10-09T22:02:18.000000Z",
   "product_vendor": "Cisco",
   "product_name": "Cisco CSR",
@@ -94,6 +94,11 @@
       "parameters": {
          "destination_network": {
            "description": "IP to block (X.X.X.X)",
+           "data_type": "string",
+           "required": true
+         },
+         "name": {
+           "description": "Name route",
            "data_type": "string",
            "required": true
          }
