@@ -8,10 +8,10 @@
       "password": "taruch"
     },
     "debug_level": 4,
-    "identifier": "block_network",
+    "identifier": "block_ip",
     "parameters": [
         {
-        "destination-network": "7.7.7.20/32"
+        "destination_network": "7.7.7.20"
         }
     ]
 }

@@ -11,7 +11,7 @@
     "identifier": "block_network",
     "parameters": [
         {
-        "destination-network": "7.7.7.20"
+        "destination_network": "7.7.7.20"
         }
     ]
 }

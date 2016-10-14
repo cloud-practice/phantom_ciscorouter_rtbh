@@ -37,9 +37,10 @@ import time
 import requests
 import httplib
 import logging
-import paramiko
-from netaddr import *
 
+REST_PORT = '55443'
+TOKEN_RESOURCE = '/auth/token-services'
+ACCEPT_HEADERS = {'Accept':'application/json'}
 
 
 # ========================================================
@@ -58,15 +59,25 @@ class CSR_Connector(BaseConnector):
         # Call the BaseConnectors init first
         super(CSR_Connector, self).__init__()
 
+        # standard port for IOS XE REST API
+        self.port = REST_PORT
+        # base URI with version number
+        self.BASE_URI = '/api/v1'
+        # resourse URI
+        self.PATH_STATIC_ROUTES = '/routing-svc/static-routes'
+        # resource for auth token
         self.user = ''
         self.password = ''
         self.device = ''
         self.next_hop_IP = ''
+        self.version = 'v1'
         self.destination_network = ''
-        self.network = ''
-        self.subnetmask = ''
-        self.tag = ''
-        self.name = ''
+        self.js = ''
+        self.TOKEN_RESOURCE =  TOKEN_RESOURCE
+        self.headers = ACCEPT_HEADERS
+        self.HEADER = {"Content-Type": "application/json"}
+        self.status_code = []
+        #logging.basicConfig(filename='/var/log/phantom/cisco_csr_app.log',level=logging.DEBUG)
 
     def initialize(self):
         """
@@ -103,6 +114,10 @@ class CSR_Connector(BaseConnector):
     def _test_connectivity(self, param):
         """
         Called when the user depresses the test connectivity button on the Phantom UI.
+
+            curl -k -X POST https://{device}:55443/api/v1/auth/token-services
+                 -H "Accept:application/json" -u "{user}:{pass}" -d ""
+        
         """
         action_result = ActionResult(dict(param))          # Add an action result to the App Run
         self.add_action_result(action_result)
@@ -120,24 +135,22 @@ class CSR_Connector(BaseConnector):
 
         self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
 
-        csr_conn = self.get_Cisco_Session()
-        self.debug_print(type(csr_conn))
-        csr_conn.send('show version\n')
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        csr_conn.close()
-        self.debug_print("Initial test connectivity to device resp: {0}".format(resp))
-
-        if resp:
-            self.debug_print("Connected to device: {0}".format(resp))
-            return self.set_status_save_progress(phantom.APP_SUCCESS, "SUCCESS!  Connected to device")
+        self.get_token()
+        if self.token:
+            #action_result.set_status(phantom.APP_SUCCESS)
+            self.debug_print("RECEIVED TOKEN: {0}".format(self.token))
+            return self.set_status_save_progress(phantom.APP_SUCCESS, "SUCCESS! Received token from device")
         else:
-            self.debug_print("Unable to connect to device: {0}".format(resp))
-            return self.set_status_save_progress(phantom.APP_ERROR, "FAILURE!  Unable to connect to device")
+            #action_result.set_status(phantom.APP_ERROR)
+            self.debug_print("DIDN'T RECEIVE TOKEN: BAD THINGS HAPPENED")
+            return self.set_status_save_progress(phantom.APP_ERROR, "FAILURE! Unable to obtain token from device")
 
 
     def listStaticBlackHoledIPs(self, param):
         """
+            curl -k -X GET https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes
+                 -H "Accept:application/json" -H "X-auth-token:{auth token}"
+                 -d ''
         """
         action_result = ActionResult(dict(param))          # Add an action result to the App Run
         self.add_action_result(action_result)
@@ -153,118 +166,86 @@ class CSR_Connector(BaseConnector):
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
 
-        self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+        result = self.get_token()
+
         # Get the current list of static routes from the Target Host
+        api_response = self.api_run('get',self.PATH_STATIC_ROUTES)
+        self.debug_print("listStaticBlackHoledIP's result RAW: {0}".format(api_response))
+        try:
+            route_list = api_response['items']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
 
-        route_list = self._get_StaticBlackHoledIPs(self.user, self.password, self.device, self.next_hop_IP)
-
-        self.debug_print("listStaticBlackHoledIP's result RAW: {0}".format(route_list))
-
+        #action_result.add_data(route_list)
         # Even if the query was successfull the data might not be available
-        if len(route_list) == 0:
-            return action_result.set_status(phantom.APP_ERROR, 'CISCO_CSR_ERR_QUERY_RETURNED_NO_DATA')
-        else:
+        if not route_list:
+            return action_result.set_status(phantom.APP_ERROR, CISCO_CSR_ERR_QUERY_RETURNED_NO_DATA)
+        if route_list:
+            routes = []
             for dest in route_list:
-                action_result.add_data({'blackholed-network': dest})
-            summary = "Query returned %s routes"  % len(route_list)
-            action_result.update_summary({'message': summary })
-            self.set_status_save_progress(phantom.APP_SUCCESS, summary)
-            #action_result.set_status(phantom.APP_SUCCESS)
+                if dest["next-hop-router"] == self.next_hop_IP:
+                    action_result.add_data({'destination-network': dest['destination-network']})
+                    routes.append(dest['destination-network'])
+            #summary = {'routes':routes}
+            summary = {'message': "Query returned {0} routes".format(len(route_list))}
+            action_result.update_summary(summary)
+            action_result.set_status(phantom.APP_SUCCESS)
+            self.set_status_save_progress(phantom.APP_SUCCESS, "Query returned {0} \
+                routes".format(action_result.get_data_size))
+        else:
+            action_result.set_status(phantom.APP_SUCCESS, CISCO_CSR_SUCC_QUERY)
 
         return action_result.get_status()
 
 
-
-    def setBlockNetwork(self, param):
+    def setStaticBlackHole(self, param):
         """
-        Will block a network based on Network/Mask
+        curl -k -X POST -H "Accept:application/json" -H "Content-type:application/json" \
+            -H "X-auth-token:{token}" -u "{user}:{pass}" \
+            -d '{"destination-network":"7.7.7.10/32","next-hop-router":"192.0.2.1"}' \
+            https://10.0.1.10:55443/api/v1/routing-svc/static-routes
         """
         action_result = ActionResult(dict(param))          # Add an action result to the App Run
         self.add_action_result(action_result)
         
         self.debug_print(param)
 
-        # Set variables based on what is provided in the "asset" and is
-        # provided by the user
         config = self.get_config()
         try:
             self.user = config["user"]
             self.password = config["password"]
             self.device = config['trigger_host']
             self.next_hop_IP = config['route_to_null']
-            self.destination_network = param['destination_network']
+            self.destination_network = param['destination-network']
+        except KeyError:
+            self.debug_print("Error: {0}".format(KeyError))
 
-        except KeyError:
-            self.debug_print("Error: {0}".format(KeyError))
-            self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
-            self.debug_print("next_hop_ip: {0}".format(self.next_hop_IP))
-            self.debug_print("tag: {0}".format(self.tag))
-            self.debug_print("destination_network: {0}".format(self.destination_network))
-        
-        # TAG is optional - may not exist
-        try:
-            self.tag = config['tag']
-        except KeyError:
-            self.debug_print("Error: {0}".format(KeyError))
-            self.debug_print("No tag in configuration")
-            pass
-        # NAME is optional - may not exist
-        try:
-            self.name = param['name']
-        except KeyError:
-            self.debug_print("Error: {0}".format(KeyError))
-            self.debug_print("No name in parameters")
-            pass
+        self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
 
         self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
         if not self.validate_ip():
-            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination_network"]))
-        ip = IPNetwork(self.destination_network)
-        network = str(ip.ip)
-        subnetmask = str(ip.netmask)
+            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination-network"]))
 
+        self.js = {"destination-network":self.destination_network, "next-hop-router":self.next_hop_IP}
+        result = self.get_token()
+        self.debug_print("self.js: {0}".format(self.js))
+        # Go get er!
+        api_response = self.api_run('post',self.PATH_STATIC_ROUTES)
+        self.debug_print("API RESPONSE: {0}".format(api_response))
 
-        self.debug_print("Dest_Net: {0}, Network: {1}, SubnetMask: {2}, tag: {3}".format(
-            self.destination_network, network, subnetmask, self.tag ))
-
-        #csr_conn = self.get_Cisco_Session()
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(self.device,username=self.user,password=self.password,allow_agent=False,look_for_keys=False)
-        csr_conn = ssh.invoke_shell()
-        self.debug_print(type(csr_conn))
-
-        csr_conn.send('conf t\n')
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        self.debug_print("conf t _ resp: {0}".format(resp))
-        #csr_conn.send('ip route %s %s %s tag %s\n' % network, subnetmask, self.next_hop_IP, self.tag)
-        tag = ''
-        name = ''
-        if self.tag:
-            tag = "tag " + self.tag
-        if self.name:
-            name = "name " + self.name
-        add_Route = 'ip route {0} {1} {2} {3} {4}\n'.format(
-                    network, subnetmask, self.next_hop_IP, tag, name )
-        csr_conn.send(add_Route)
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        csr_conn.close()
-        ssh.close()
-        self.debug_print("show ip static route resp: {0}".format(resp))
-
-        route_list = self._get_StaticBlackHoledIPs(self.user, self.password, self.device, self.next_hop_IP)
-        for i in xrange(len(route_list)):
-            if self.destination_network in route_list[i]:
-                return action_result.set_status(phantom.APP_SUCCESS, "Successfully added {0}".format( self.destination_network ))
+        if api_response:
+            return action_result.set_status(phantom.APP_SUCCESS, "Successfully added {0}".format( self.destination_network ))
         else:
+            #TODO: Figure out how to send a good error if the route already exists (404 error)
             return action_result.set_status(phantom.APP_ERROR)
+        #return action_result.get_status()
 
 
-    def delBlockNetwork(self, param):
+    def delStaticBlackHole(self, param):
         """
-        Will remove a blocked network based on IP/NM
+            curl -k -X DELETE -H "Accept:application/json" -u "{user}:{pass}" -d '' \
+                 https://{trigger_rtr}:55443/api/v1/routing-svc/static-routes/{src_IP}_32_192.0.2.1
         """
         action_result = ActionResult(dict(param))          # Add an action result to the App Run
         self.add_action_result(action_result)
@@ -277,84 +258,54 @@ class CSR_Connector(BaseConnector):
             self.password = config["password"]
             self.device = config["trigger_host"]
             self.next_hop_IP = config['route_to_null']
-            self.destination_network = param["destination_network"]
+            self.destination_network = param["destination-network"]
         except KeyError:
             self.debug_print("Error: {0}".format(KeyError))
-            self.debug_print("Device: {0}, User: {1}, Password: {2}".format(self.device, self.user, self.password))
-            self.debug_print("next_hop_ip: {0}".format(self.next_hop_IP))
-            self.debug_print("tag: {0}".format(self.tag))
-            self.debug_print("destination_network: {0}".format(self.destination_network))
 
+        self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
+        self.debug_print("Dest_Net: {0}, Device: {1}".format(self.destination_network, self.device))
 
         self.debug_print("Validate_IP function returns: {0}".format(self.validate_ip()))
         if not self.validate_ip():
-            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination_network"]))
+            return action_result.set_status(phantom.APP_ERROR, "IP not valid: {0}".format(param["destination-network"]))
+        dest_net = self.destination_network.split('/')
 
-        ip = IPNetwork(self.destination_network)
-        network = str(ip.ip)
-        subnetmask = str(ip.netmask)
+        result = self.get_token()
+        PATH_STATIC_ROUTES = self.PATH_STATIC_ROUTES + "/" + \
+                dest_net[0] + "_" + dest_net[1] + "_" + self.next_hop_IP
+        api_response = self.api_run('delete',PATH_STATIC_ROUTES)
+        self.debug_print("API RESPONSE: {0}".format(api_response))
 
-        #csr_conn = self.get_Cisco_Session()
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(self.device,username=self.user,password=self.password,allow_agent=False,look_for_keys=False)
-        csr_conn = ssh.invoke_shell()
-        self.debug_print(type(csr_conn))
-
-        csr_conn.send('conf t\n')
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        self.debug_print("conf t _ resp: {0}".format(resp))
-        #csr_conn.send('ip route %s %s %s tag %s\n' % network, subnetmask, self.next_hop_IP, self.tag)
-        del_Route = 'no ip route {0} {1} {2}\n'.format(
-                    network, subnetmask, self.next_hop_IP )
-        csr_conn.send(del_Route)
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        csr_conn.close()
-        ssh.close()
-        self.debug_print("show ip static route resp: {0}".format(resp))
-
-        route_list = self._get_StaticBlackHoledIPs(self.user, self.password, self.device, self.next_hop_IP)
-        for i in xrange(len(route_list)):
-            if self.destination_network in route_list[i]:
-                return action_result.set_status(phantom.APP_ERROR,\
-                    "Route {0} not deleted".format( self.destination_network ))
+        if api_response:
+            return action_result.set_status(phantom.APP_SUCCESS, "Successfully deleted {0}".format( self.destination_network ))
         else:
-            return action_result.set_status(phantom.APP_SUCCESS, \
-                    "Successfully removed {0}".format( self.destination_network ))
+            #TODO: Figure out how to send a good error if the route already exists (404 error)
+            return action_result.set_status(phantom.APP_ERROR)
+        #return action_result.get_status()
 
-    def _get_StaticBlackHoledIPs(self, user, password, device, next_hop_IP):
+
+    def get_token(self):
         """
-
+        Get an auth token from the device
+            curl -k -X POST https://{trigger_rtr}:55443/api/v1/auth/token-services/
+                 -H "Accept:application/json" -u "{user}:{pass}"
+                 -d ''
         """
-        route_list = []
-        #csr_conn = self.get_Cisco_Session()
+        result = self.api_run('post',TOKEN_RESOURCE)
+        self.debug_print("{0}".format(result))
+        self.token = result['token-id']
+        self.debug_print("token id: {0}".format(self.token))
+        self.headers.update({'X-auth-token':self.token})
+        return
 
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect(self.device,username=self.user,password=self.password,allow_agent=False,look_for_keys=False)
-        csr_conn = ssh.invoke_shell()
 
-        self.debug_print(type(csr_conn))
-        #Set the terminal length to infinite so that all routes are listed in the response
-        csr_conn.send('terminal length 0\n')
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        self.debug_print("set terminal length resp: {0}".format(resp))
-        # Send the show ip static route command to the router
-        csr_conn.send('show ip static route\n')
-        time.sleep(1)
-        resp = csr_conn.recv(99999)
-        csr_conn.close()
-        ssh.close()
-        self.debug_print("show ip static route resp: {0}".format(resp))
-        findstring = "via " + self.next_hop_IP + " [A]"
-        for i in resp.split('\n'):
-            if findstring in i:
-                i = i.replace('\r', '')
-                route_list.append(i)
-        return route_list
+    def build_url(self, rest_port=REST_PORT,resource=TOKEN_RESOURCE):
+        """ 
+        build a URL for the REST resource
+        """
+        self.url = 'https://{0}:{1}/api/{2}{3}'.format(self.device,self.port,self.version,resource)
+        self.debug_print('set full URL to: {0}'.format(self.url))
+        return
 
 
     def validate_ip(self):
@@ -376,19 +327,32 @@ class CSR_Connector(BaseConnector):
         return True
 
 
-    def get_Cisco_Session(self):
-        try:
-            ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            ssh.connect(self.device, username=self.user, password=self.password ,allow_agent=False, look_for_keys=False)
-            return ssh.invoke_shell()
-        except Exception as e:
-            self.debug_print("In get_Cisco_Session method - if were are here bad things happened")
-            self.debug_print("User: {0}, Password: {1}".format(self.user, self.password))
-            self.debug_print("Connection to device failed: {0}".format(self.device))
-            self.debug_print()
-            return action_result.set_status(phantom.APP_ERROR, "Connection Failed: %s" % e)
-
+    def api_run(self, method, resource):
+        """
+        get/put/post/delete a request to the REST service
+        This module requires that the 
+        """
+        # a GET/POST/PUT/DELETE method name was passed in;
+        # call the appropriate method from requests module
+        request_method = getattr(requests,method)
+        self.debug_print("api_run: {0}".format(request_method))
+        self.build_url(resource=resource)
+        if self.js:
+            self.headers.update({'Content-type':'application/json'})
+            result = request_method(self.url, auth=(self.user,self.password),\
+                    headers = self.headers,\
+                    data = json.dumps(self.js),\
+                    verify = False)
+        else:
+            result = request_method(self.url, auth=(self.user, self.password),\
+                    headers = self.headers,\
+                    verify = False)
+        if result.status_code in [requests.codes.ok]:
+            return result.json()
+        elif result.status_code in [requests.codes.created, requests.codes.no_content]:
+            return True
+        #else:
+        #    self.interpret_response(r.status_code)
 
 
     def handle_action(self, param):
@@ -407,10 +371,8 @@ class CSR_Connector(BaseConnector):
 
         supported_actions = {"test connectivity": self._test_connectivity,
                              "list_networks": self.listStaticBlackHoledIPs,
-                             "block_ip": self.setBlockNetwork,
-                             "unblock_ip": self.delBlockNetwork,
-                             "block_network": self.setBlockNetwork,
-                             "unblock_network": self.delBlockNetwork
+                             "block_network": self.setStaticBlackHole,
+                             "unblock_network": self.delStaticBlackHole
                              }
 
         run_action = supported_actions[action_id]

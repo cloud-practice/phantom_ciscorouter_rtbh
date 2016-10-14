@@ -12,7 +12,7 @@
     "identifier": "unblock_network",
     "parameters": [
         {
-        "destination-network": "7.7.7.0/24"
+        "destination_network": "7.7.7.0/24"
         }
     ]
 }
