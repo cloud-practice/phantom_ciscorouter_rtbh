@@ -4,7 +4,7 @@
   "description" : "This app interfaces with Cisco IOS-XE devices to create a blackhole for configured IPs or networks in Cisco BGP networks; it supports containment actions like 'block ip', 'block network', correct actions like 'unblock ip', 'unblock network', and investigative actions like 'list blocked networks' on a Cisco CSR device. It uses the SSH interface to log on and perform its actions.  The target host is required to have the SSH interface enabled and a user account configured for privilege access (15).",
   "publisher": "World Wide Technology",
   "package_name": "phantom_ciscorouter_rtbh-1.10",
-  "type": "Firewall",
+  "type": "firewall",
   "license": "Copyright (c) World Wide Technology, Inc. 2016",
   "main_module" : "ciscorouter_rtbh_connector.pyc",
   "app_version": "1.10,
